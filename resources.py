@@ -126,6 +126,22 @@ class ResourceManager:
     def get_card_image(self, cid):    return self.images.get(f'card_{cid}')
     def get_explosion_frames(self, color): return self.explosion_anims.get(color, [])
 
+    def get_explosion_frame_scaled(self, color, frame_index, size):
+        """按 (color, frame, size) 缓存爆炸帧缩放，避免每帧 transform.scale。"""
+        key = ("exp", color, frame_index, size)
+        if key not in self._scale_cache:
+            frames = self.explosion_anims.get(color, [])
+            if 0 <= frame_index < len(frames):
+                self._scale_cache[key] = pygame.transform.scale(
+                    frames[frame_index], (size, size))
+            else:
+                self._scale_cache[key] = None
+        return self._scale_cache[key]
+
+    def get_scaled_named(self, img_key, w, h):
+        """命名资源按目标尺寸缓存（陨石/剑等）。"""
+        return self.get_scaled(img_key, w, h)
+
     def play_music(self):
         if not os.path.exists(self.music_path): return
         try:

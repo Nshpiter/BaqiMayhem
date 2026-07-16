@@ -11,6 +11,50 @@ DELAY_PRE_CLEAR  = 50   # ← [可调] 消除前高亮停顿时间
 DELAY_POST_FALL  = 50   # ← [可调] 下落完成后等待时间
 
 
+# ── 纯函数：可单测，无显示依赖 ──────────────────────────────────
+
+def remaining_score_to_next_card(score, card_draw_index, thresholds=None):
+    """距下一张卡还需多少分；无下一阈值时返回 None。"""
+    if thresholds is None:
+        thresholds = CARD_DRAW_THRESHOLDS
+    if card_draw_index >= len(thresholds):
+        return None
+    return max(0, int(thresholds[card_draw_index]) - int(score))
+
+
+def get_effective_drop_interval(soft_drop_held, disable_down_key=False,
+                                normal_interval=None, soft_interval=None):
+    """正常下落间隔 vs 按住 soft-drop 的加速间隔。"""
+    if normal_interval is None:
+        normal_interval = NORMAL_DROP_INTERVAL
+    if soft_interval is None:
+        soft_interval = SOFT_DROP_INTERVAL
+    if soft_drop_held and not disable_down_key:
+        return soft_interval
+    return normal_interval
+
+
+def get_top_filled_row(grid):
+    """返回最高有块的行索引；空盘返回 GRID_HEIGHT。"""
+    for y in range(len(grid)):
+        row = grid[y]
+        for cell in row:
+            if cell:
+                return y
+    return GRID_HEIGHT
+
+
+def danger_level_from_top_row(top_row, danger_rows=None):
+    """0.0=安全 … 1.0=极危。top_row 越小越危险。"""
+    if danger_rows is None:
+        danger_rows = DANGER_TOP_ROWS
+    if top_row >= danger_rows:
+        return 0.0
+    if danger_rows <= 0:
+        return 1.0
+    return max(0.0, min(1.0, 1.0 - (top_row / float(danger_rows))))
+
+
 class EffectsManager:
     def __init__(self):
         self.falling_anims  = []
@@ -74,6 +118,7 @@ class Game:
         self._reset_modifiers()
         self.combo_count       = 0
         self.last_score_added  = 0
+        self.soft_drop_held    = False  # 由主循环按键状态写入
 
     def _init_grids(self):
         self.grid         = [[None  for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
@@ -116,6 +161,7 @@ class Game:
         self.active_buffs     = {}
         self.combo_count      = 0
         self.last_score_added = 0
+        self.soft_drop_held   = False
         self._reset_modifiers()
         self.skill_manager.set_character(global_state['current_character'])
         self.skill_manager.reset()
@@ -125,6 +171,12 @@ class Game:
         self.last_drop_time   = now
         self.next_stone_time  = now + STONE_INITIAL_DELAY  
         self.last_update_time = now
+
+    def remaining_to_next_card(self):
+        return remaining_score_to_next_card(self.score, self.card_draw_index)
+
+    def get_danger_level(self):
+        return danger_level_from_top_row(get_top_filled_row(self.grid))
 
     def toggle_pause(self):
         if self.paused:
@@ -698,12 +750,15 @@ class Game:
                 self.next_stone_time = current_time + int(
                     STONE_INTERVAL * self.stone_interval_multiplier)  
         
-        # 终极防卡死处理
+        # 终极防卡死处理 + 重力下落（含 soft-drop 加速）
         if self.internal_state == STATE_PLAYING:
             if not self.current_blocks and not self.game_over_flag:
                 self.current_blocks = self.spawn_new_blocks_from_next()
             elif self.current_blocks:
-                if current_time - self.last_drop_time > self.normal_drop_interval:
+                drop_interval = get_effective_drop_interval(
+                    self.soft_drop_held, self.disable_down_key,
+                    self.normal_drop_interval, SOFT_DROP_INTERVAL)
+                if current_time - self.last_drop_time > drop_interval:
                     self.last_drop_time = current_time
                     new_pos = [{"color": b["color"], "x": b["x"], "y": b["y"] + 1}
                                for b in self.current_blocks]

@@ -55,10 +55,9 @@ class Explosion:
 
     def draw(self, screen, offset_x, offset_y, cell_size):
         from resources import R
-        frames = R.get_explosion_frames(self.color)
-        if frames and self.frame_index < len(frames):
-            scale_size = int(cell_size * 1.3)   # ← [可调] 爆炸视觉缩放倍数（相对格子）
-            scaled = pygame.transform.scale(frames[self.frame_index], (scale_size, scale_size))
+        scale_size = int(cell_size * 1.3)   # ← [可调] 爆炸视觉缩放倍数（相对格子）
+        scaled = R.get_explosion_frame_scaled(self.color, self.frame_index, scale_size)
+        if scaled:
             cx = offset_x + self.grid_x * cell_size + cell_size // 2
             cy = offset_y + self.grid_y * cell_size + cell_size // 2
             screen.blit(scaled, scaled.get_rect(center=(cx, cy)))
@@ -113,11 +112,10 @@ class MeteoriteAnim:
     def draw(self, screen, board_offset_x, board_width, cell_size):
         """cell_size 由 renderer 传入，用于计算合适的显示尺寸"""
         from resources import R
-        img = R.get_block_image('meteorite')
-        if img:
-            cx   = board_offset_x + board_width // 2
-            size = cell_size * METEOR_DISPLAY_SIZE  # ← [可调] METEOR_DISPLAY_SIZE 在 settings.py
-            scaled = pygame.transform.scale(img, (size, size))
+        cx   = board_offset_x + board_width // 2
+        size = cell_size * METEOR_DISPLAY_SIZE  # ← [可调] METEOR_DISPLAY_SIZE 在 settings.py
+        scaled = R.get_scaled_named('meteorite', size, size)
+        if scaled:
             screen.blit(scaled, scaled.get_rect(center=(cx, int(self.y))))
 
 
@@ -140,10 +138,9 @@ class SwordAnim:
 
     def draw(self, screen, offset_x, offset_y, cell_size):
         from resources import R
-        img = R.get_block_image('sword')
-        if img:
-            w = cell_size
-            h = cell_size * 3           # ← [可调] 剑气高度（格子数×格子高）
-            scaled = pygame.transform.scale(img, (w, h))
+        w = cell_size
+        h = cell_size * 3           # ← [可调] 剑气高度（格子数×格子高）
+        scaled = R.get_scaled_named('sword', w, h)
+        if scaled:
             # self.y 是绝对 y；offset_x 是棋盘左边缘
             screen.blit(scaled, (offset_x + self.col * cell_size, int(self.y)))

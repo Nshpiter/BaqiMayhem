@@ -81,8 +81,11 @@ btn_back_scr  = Button(0, 0, 200, 50, "返回", R.font)
 btn_pause     = Button(20, 20, 80, 40, "暂停", R.font, bg_color=(60, 40, 30))
 btn_resume    = Button(0, 0, 200, 50, "继续", R.font)
 btn_to_menu   = Button(0, 0, 200, 50, "退出", R.font)
+btn_play_again = Button(0, 0, 200, 50, "再来一局", R.font, bg_color=(80, 120, 80))
+btn_go_menu    = Button(0, 0, 200, 50, "返回主菜单", R.font)
 screen_buttons = []
 skill_btn_rect = pygame.Rect(0, 0, 0, 0)
+q_skill_btn_rect = pygame.Rect(0, 0, 0, 0)
 
 def update_layout():
     global menu_buttons, char_buttons, screen_buttons
@@ -102,6 +105,8 @@ def update_layout():
     btn_back_scr.rect.center  = (cx, sy + len(resolutions) * 60 + 40)
     btn_resume.rect.center    = (cx, cy - 30)
     btn_to_menu.rect.center   = (cx, cy + 40)
+    btn_play_again.rect.center = (cx, cy + 95)
+    btn_go_menu.rect.center    = (cx, cy + 155)
 
 update_layout()
 
@@ -143,7 +148,7 @@ def draw_char_select():
     btn_back_char.draw(screen)
 
 def draw_game():
-    global skill_btn_rect
+    global skill_btn_rect, q_skill_btn_rect
     draw_background()
     sw, sh = global_state['screen_size']
     board_h   = (sh - 80) // GRID_HEIGHT * GRID_HEIGHT
@@ -153,13 +158,16 @@ def draw_game():
     by = (sh - board_h) // 2
 
     board_rect = renderer.draw_game_board(screen, game, bx, by, board_w, board_h)
-    skill_btn_rect = renderer.draw_hud(screen, game, board_rect)
+    skill_btn_rect, q_skill_btn_rect = renderer.draw_hud(screen, game, board_rect)
     btn_pause.draw(screen)
 
     if game.internal_state == STATE_SELECT_CARD:
         renderer.draw_card_selection(screen, game)
     elif game.game_over_flag:
-        renderer.draw_game_over(screen, game)
+        cx, cy = _cx(), _cy()
+        btn_play_again.rect.center = (cx, cy + 95)
+        btn_go_menu.rect.center = (cx, cy + 155)
+        renderer.draw_game_over(screen, game, btn_play_again, btn_go_menu)
     elif game.paused:
         renderer.draw_pause(screen, btn_resume, btn_to_menu)
 
@@ -215,9 +223,14 @@ while True:
             btn_pause.hovered = btn_pause.rect.collidepoint((mx, my))
 
             if game.game_over_flag:
+                btn_play_again.hovered = btn_play_again.rect.collidepoint((mx, my))
+                btn_go_menu.hovered = btn_go_menu.rect.collidepoint((mx, my))
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    game.running = False
-                    current_state = STATE_MENU
+                    if btn_play_again.rect.collidepoint(event.pos):
+                        game.start_new_game()  # 同角色再来一局
+                    elif btn_go_menu.rect.collidepoint(event.pos):
+                        game.running = False
+                        current_state = STATE_MENU
 
             elif game.internal_state == STATE_SELECT_CARD:
                 if event.type == pygame.MOUSEBUTTONDOWN:
@@ -263,14 +276,18 @@ while True:
                             np = [{"color": b["color"], "x": b["x"] + 1, "y": b["y"]} for b in game.current_blocks]
                             if not game.check_collision(np): game.current_blocks = np
                     if game.internal_state == STATE_PLAYING:
+                        # 下键/S：首次按下立即落一格；持续加速由 soft_drop_held 驱动
                         if event.key == pygame.K_DOWN or event.key == pygame.K_s:
                             if not game.disable_down_key:
                                 np = [{"color": b["color"], "x": b["x"], "y": b["y"] + 1} for b in game.current_blocks]
-                                if not game.check_collision(np): game.current_blocks = np
-                        elif event.key == pygame.K_SPACE or event.key == pygame.K_w:  
+                                if not game.check_collision(np):
+                                    game.current_blocks = np
+                                    game.last_drop_time = pygame.time.get_ticks()
+                        elif event.key == pygame.K_SPACE or event.key == pygame.K_w:
                             game.rotate_blocks()
                         elif event.key == pygame.K_UP:
-                            pass 
+                            # ↑ 硬降落地并落定（对齐 README / 控制方案）
+                            game.hard_drop()
 
                     if event.key in (pygame.K_e, pygame.K_KP1): game.skill_manager.try_trigger(game)
                     elif event.key in (pygame.K_q, pygame.K_KP2): game.try_use_q_skill()
@@ -279,6 +296,8 @@ while True:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if skill_btn_rect.collidepoint(event.pos):
                         game.skill_manager.try_trigger(game)
+                    elif q_skill_btn_rect.width > 0 and q_skill_btn_rect.collidepoint(event.pos):
+                        game.try_use_q_skill()
 
             if (event.type == pygame.MOUSEBUTTONDOWN and not game.game_over_flag
                     and game.internal_state != STATE_SELECT_CARD and not game.paused):
@@ -295,7 +314,18 @@ while True:
                     if b.rect.collidepoint(event.pos): handle_resize(res)
                 if btn_back_scr.rect.collidepoint(event.pos): current_state = STATE_MENU
 
-    if current_state == STATE_GAME: game.update()
+    if current_state == STATE_GAME:
+        # 按住 ↓/S 持续 soft-drop；禁用下键卡时关闭
+        if (not game.paused and not game.game_over_flag
+                and game.internal_state != STATE_SELECT_CARD):
+            keys = pygame.key.get_pressed()
+            game.soft_drop_held = (
+                (keys[pygame.K_DOWN] or keys[pygame.K_s])
+                and not game.disable_down_key
+            )
+        else:
+            game.soft_drop_held = False
+        game.update()
 
     if   current_state == STATE_MENU:            draw_menu()
     elif current_state == STATE_CHAR_SELECT:     draw_char_select()

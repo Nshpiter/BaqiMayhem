@@ -3,12 +3,17 @@ import pygame
 from settings import *
 from resources import R
 from cards import ALL_CARDS
+from game_logic import remaining_score_to_next_card, get_top_filled_row, danger_level_from_top_row
 
 CARD_TIER_COLOR = {
     "01": (80,  130, 220),
     "02": (80,  180, 100),
     "03": (200, 80,  80),
 }
+
+def _lerp_color(a, b, t):
+    t = max(0.0, min(1.0, t))
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 class GameRenderer:
     def __init__(self):
@@ -102,8 +107,22 @@ class GameRenderer:
         for ft in game.effects_manager.floating_texts:
             ft.draw(screen, R.font)
 
-        pygame.draw.rect(screen, (160, 120, 80), board_rect.inflate(10, 10),
-                         width=6, border_radius=8)
+        # 顶部危险区 + 边框变红警告
+        danger = danger_level_from_top_row(get_top_filled_row(game.grid))
+        if danger > 0:
+            danger_h = int(cell_size * DANGER_TOP_ROWS)
+            zone = pygame.Surface((board_px_w, danger_h), pygame.SRCALPHA)
+            alpha = int(40 + 100 * danger)
+            zone.fill((220, 40, 40, alpha))
+            # 脉冲
+            pulse = 0.5 + 0.5 * abs((pygame.time.get_ticks() % 800) / 400 - 1)
+            zone.set_alpha(int((40 + 120 * danger) * pulse))
+            screen.blit(zone, (offset_x, offset_y))
+
+        border_col = _lerp_color((160, 120, 80), (220, 50, 50), danger)
+        border_w = 6 if danger < 0.6 else 8
+        pygame.draw.rect(screen, border_col, board_rect.inflate(10, 10),
+                         width=border_w, border_radius=8)
         return board_rect
 
     def _draw_cell(self, screen, gx, gy, color, ox, oy, cs,
@@ -168,6 +187,7 @@ class GameRenderer:
     def draw_hud(self, screen, game, board_rect):
         cell_size      = board_rect.width // GRID_WIDTH
         skill_btn_rect = pygame.Rect(0, 0, 0, 0)
+        q_skill_btn_rect = pygame.Rect(0, 0, 0, 0)
         self._draw_left_panel(screen, game)
 
         lw = int(cell_size * 2.5)
@@ -200,29 +220,34 @@ class GameRenderer:
         screen.blit(sl, sl.get_rect(center=(sc_x, sc_y - 18)))
         screen.blit(sv, sv.get_rect(center=(sc_x, sc_y + 18)))
 
-        # 【核心修改】：进度条算法适配非线性字典
+        # 进度条 + 距下一张卡剩余分数
+        remain = remaining_score_to_next_card(game.score, game.card_draw_index)
         if game.card_draw_index < len(CARD_DRAW_THRESHOLDS):
             target_score = CARD_DRAW_THRESHOLDS[game.card_draw_index]
             prev_score   = 0 if game.card_draw_index == 0 else CARD_DRAW_THRESHOLDS[game.card_draw_index - 1]
             current      = game.score - prev_score
-            total_req    = target_score - prev_score
+            total_req    = max(1, target_score - prev_score)
             prog         = min(1.0, max(0.0, current / total_req))
         else:
-            prog = 1.0  # 已经满级
+            prog = 1.0
 
         bar_w   = 120
         bar_rect= pygame.Rect(sc_x - bar_w // 2, sc_y + 72, bar_w, 8)
         pygame.draw.rect(screen, (60, 60, 60), bar_rect, border_radius=4)
         fill = pygame.Rect(bar_rect.x, bar_rect.y, int(bar_w * prog), 8)
         pygame.draw.rect(screen, (255, 215, 0), fill, border_radius=4)
-        
-        # 提示文字
-        avail = [k for k in ALL_CARDS if k not in game.owned_cards]
-        text_status = "下一张卡" if len(avail) > 0 else "卡池已空"
-        ct_s = R.font_sm.render(text_status, True, (160, 160, 160))
-        screen.blit(ct_s, ct_s.get_rect(center=(sc_x, sc_y + 90)))
 
-        cy_start = sc_y + 110
+        avail = [k for k in ALL_CARDS if k not in game.owned_cards]
+        if remain is not None and len(avail) > 0:
+            remain_txt = f"下一张卡还差 {remain}"
+            ct_s = R.font_sm.render(remain_txt, True, (255, 220, 120))
+        elif len(avail) == 0:
+            ct_s = R.font_sm.render("卡池已空", True, (160, 160, 160))
+        else:
+            ct_s = R.font_sm.render("下一张卡", True, (160, 160, 160))
+        screen.blit(ct_s, ct_s.get_rect(center=(sc_x, sc_y + 96)))
+
+        cy_start = sc_y + 118
         char_names = {CHAR_NONE:"无", CHAR_KEQING:"刻晴",
                       CHAR_GANYU:"甘雨", CHAR_ZHONGLI:"钟离", CHAR_ZIBAI:"兹白"}
         name = char_names.get(global_state['current_character'], "?")
@@ -264,8 +289,8 @@ class GameRenderer:
             now        = pygame.time.get_ticks()
             q_elapsed  = now - game.q_skill_last_used
             q_ready    = q_elapsed >= 60000
-            if q_ready:
-                game.q_skill_ready = True
+            game.q_skill_ready = q_ready
+            q_skill_btn_rect = pygame.Rect(btn_cx - btn_r, btn_cy - btn_r, btn_r * 2, btn_r * 2)
             base_col = (100, 200, 255) if q_ready else (40, 80, 100)
             pygame.draw.circle(screen, base_col, (btn_cx, btn_cy), btn_r)
             pygame.draw.circle(screen, (150,230,255) if q_ready else (80,130,160),
@@ -277,7 +302,7 @@ class GameRenderer:
                 rq = R.font_sm.render(str(rem_q), True, (200, 180, 80))
                 screen.blit(rq, rq.get_rect(center=(btn_cx, btn_cy + btn_r + 12)))
 
-        return skill_btn_rect
+        return skill_btn_rect, q_skill_btn_rect
 
     def draw_card_selection(self, screen, game):
         sw, sh = global_state['screen_size']
@@ -322,12 +347,38 @@ class GameRenderer:
 
             img = R.get_card_image(card_id)
             if img:
-                scaled = R.get_scaled(f"card_{card_id}", card_w, card_h)
-                if scaled: screen.blit(scaled, rect)
-            else:
-                name  = ALL_CARDS[card_id]['name']
-                nsurf = R.font.render(name, True, (255, 215, 0))
-                screen.blit(nsurf, nsurf.get_rect(center=(rect.centerx, rect.centery)))
+                # 卡面图占上半，底部留给名称与描述
+                img_h = int(card_h * 0.52)
+                scaled = R.get_scaled(f"card_{card_id}", card_w - 16, img_h)
+                if scaled:
+                    screen.blit(scaled, scaled.get_rect(midtop=(rect.centerx, rect.y + 10)))
+            # 始终显示名称 + 短描述（不依赖是否有卡面图）
+            card_data = ALL_CARDS[card_id]
+            name  = card_data['name']
+            desc  = card_data['desc']
+            nsurf = R.font.render(name, True, (255, 215, 0))
+            name_y = rect.y + int(card_h * 0.56) if img else rect.centery - 40
+            screen.blit(nsurf, nsurf.get_rect(center=(rect.centerx, name_y)))
+
+            # 描述换行
+            max_w = card_w - 28
+            words = list(desc)
+            lines, cur = [], ""
+            for ch in words:
+                trial = cur + ch
+                if R.font_sm.size(trial)[0] <= max_w:
+                    cur = trial
+                else:
+                    if cur:
+                        lines.append(cur)
+                    cur = ch
+            if cur:
+                lines.append(cur)
+            dy = name_y + 28
+            for line in lines[:5]:
+                dsurf = R.font_sm.render(line, True, (210, 210, 210))
+                screen.blit(dsurf, dsurf.get_rect(center=(rect.centerx, dy)))
+                dy += 22
 
         # 【核心修改】：添加跳过/关闭按钮
         skip_surf = R.font.render("× 跳过选卡", True, (200, 200, 200))
@@ -356,24 +407,44 @@ class GameRenderer:
         screen.blit(skip_surf, skip_rect)
         game.skip_rect = skip_rect
 
-    def draw_game_over(self, screen, game):
+    def draw_game_over(self, screen, game, btn_play_again=None, btn_go_menu=None):
         sw, sh  = global_state['screen_size']
         overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 210))
         screen.blit(overlay, (0, 0))
         cx, cy = sw // 2, sh // 2
 
-        panel = pygame.Rect(0, 0, 420, 280)
-        panel.center = (cx, cy)
+        panel = pygame.Rect(0, 0, 480, 420)
+        panel.center = (cx, cy - 10)
         pygame.draw.rect(screen, (30, 20, 20), panel, border_radius=18)
         pygame.draw.rect(screen, (200, 80, 80), panel, 3, border_radius=18)
 
         t1   = R.font_lg.render("胜负已分", True, RED)
         sc_s = R.font.render(f"最终得分：{game.score}", True, WHITE)
-        hint = R.font_sm.render("点击任意处返回主菜单", True, GRAY)
-        screen.blit(t1,   t1.get_rect(center=(cx, cy - 70)))
-        screen.blit(sc_s, sc_s.get_rect(center=(cx, cy)))
-        screen.blit(hint, hint.get_rect(center=(cx, cy + 70)))
+        screen.blit(t1,   t1.get_rect(center=(cx, panel.top + 40)))
+        screen.blit(sc_s, sc_s.get_rect(center=(cx, panel.top + 95)))
+
+        cards_label = R.font_sm.render("本局获得卡牌", True, (200, 180, 120))
+        screen.blit(cards_label, cards_label.get_rect(center=(cx, panel.top + 140)))
+
+        if game.owned_cards:
+            y = panel.top + 168
+            for cid in game.owned_cards[-10:]:
+                if cid not in ALL_CARDS:
+                    continue
+                tier = cid[:2]
+                col = CARD_TIER_COLOR.get(tier, (180, 180, 180))
+                line = R.font_sm.render(f"· {ALL_CARDS[cid]['name']}", True, col)
+                screen.blit(line, line.get_rect(center=(cx, y)))
+                y += 22
+        else:
+            empty = R.font_sm.render("（未获得卡牌）", True, GRAY)
+            screen.blit(empty, empty.get_rect(center=(cx, panel.top + 175)))
+
+        if btn_play_again:
+            btn_play_again.draw(screen)
+        if btn_go_menu:
+            btn_go_menu.draw(screen)
 
     def draw_pause(self, screen, btn_resume, btn_to_menu):
         from ui import draw_panel

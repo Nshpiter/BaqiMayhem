@@ -18,8 +18,12 @@ BUTTON_HOVER= (80,  84,  92)
 RED         = (220, 80,  80)
 
 # ── 下落速度 ──────────────────────────────────────────────────
-NORMAL_DROP_INTERVAL  = 400     
-ANIMATION_DROP_SPEED  = 15      
+NORMAL_DROP_INTERVAL  = 400
+SOFT_DROP_INTERVAL    = 50      # 按住下键 soft drop 间隔 (ms)
+ANIMATION_DROP_SPEED  = 15
+
+# 顶部危险区：最高有块的行 < DANGER_TOP_ROWS 时边框/区域开始变红
+DANGER_TOP_ROWS       = 3
 
 # ── 石头生成 ──────────────────────────────────────────────────
 STONE_INITIAL_DELAY   = 10000   
